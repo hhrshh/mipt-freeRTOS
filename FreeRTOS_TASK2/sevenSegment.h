@@ -18,7 +18,6 @@ typedef struct {
     GPIO_TypeDef* gpioPort; // Порт GPIO, к которому подключены сегменты
 }segmen_t;
 
-
 // инициализация сигмента
 void initSegment(segmen_t* segment);
 // отображение сигмента

@@ -30,7 +30,6 @@ void initSegment(segmen_t* segment)
         for(int j = 0; j < 7; j++)
             segment->segmentState[i][j] = state[i][j];
 
-
     // Инициализация пинов для управления сегментами
     segment->pin[0] = LA_Pin;
     segment->pin[1] = LB_Pin;
