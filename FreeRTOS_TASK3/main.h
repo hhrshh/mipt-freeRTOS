@@ -57,14 +57,22 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define Task1_Pin GPIO_PIN_1
+#define Task1_Pin GPIO_PIN_0
 #define Task1_GPIO_Port GPIOA
-#define Task2_Pin GPIO_PIN_2
+#define Task2_Pin GPIO_PIN_1
 #define Task2_GPIO_Port GPIOA
-#define Task3_Pin GPIO_PIN_3
+#define Task3_Pin GPIO_PIN_2
 #define Task3_GPIO_Port GPIOA
-#define TaskIdle_Pin GPIO_PIN_4
+#define TaskIdle_Pin GPIO_PIN_3
 #define TaskIdle_GPIO_Port GPIOA
+#define BUT1_Pin GPIO_PIN_4
+#define BUT1_GPIO_Port GPIOA
+#define BUT2_Pin GPIO_PIN_5
+#define BUT2_GPIO_Port GPIOA
+#define BUT3_Pin GPIO_PIN_6
+#define BUT3_GPIO_Port GPIOA
+#define BUT4_Pin GPIO_PIN_7
+#define BUT4_GPIO_Port GPIOA
 #define LA_Pin GPIO_PIN_0
 #define LA_GPIO_Port GPIOB
 #define LB_Pin GPIO_PIN_1

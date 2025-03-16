@@ -23,9 +23,13 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "sevenSegment.h"
+#include "modbusRTU.h"
+#include "timers.h"
+#include "queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+typedef StaticTimer_t osStaticTimerDef_t;
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
@@ -34,14 +38,9 @@
 /* USER CODE BEGIN PD */
 #define TASK_DEBUG
 #define BUF_SIZE 256
-#define MB_ADDR 2
 #define COIL_NUMBERS 1
 #define SHOW_MINUS 10
 #define LOCK_PRINT_SEGMENT 11
-#define configASSERT(x) if((x) == 0) {taskDISABLE_INTERRUPTS(); for(;;){ \
-									  GPIOA->BSRR = GPIO_PIN_4; \
-									  __NOP(); \
-									  GPIOA->BSRR = (uint32_t)GPIO_PIN_4 << 16U;}}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,17 +53,50 @@ IWDG_HandleTypeDef hiwdg;
 
 UART_HandleTypeDef huart1;
 
-osThreadId indicationSegmHandle;
-osThreadId modbusReceiveHandle;
-osMessageQId queueDisplaySHandle;
-osTimerId swoTimerDebugHandle;
+/* Definitions for indicationSegm */
+osThreadId_t indicationSegmHandle;
+const osThreadAttr_t indicationSegm_attributes = {
+  .name = "indicationSegm",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for modbusReceive */
+osThreadId_t modbusReceiveHandle;
+const osThreadAttr_t modbusReceive_attributes = {
+  .name = "modbusReceive",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for queueDisplayS */
+osMessageQueueId_t queueDisplaySHandle;
+const osMessageQueueAttr_t queueDisplayS_attributes = {
+  .name = "queueDisplayS"
+};
+/* Definitions for swoTimerDebug */
+osTimerId_t swoTimerDebugHandle;
 osStaticTimerDef_t swoTimerDebugControlBlock;
+const osTimerAttr_t swoTimerDebug_attributes = {
+  .name = "swoTimerDebug",
+  .cb_mem = &swoTimerDebugControlBlock,
+  .cb_size = sizeof(swoTimerDebugControlBlock),
+};
+/* Definitions for buttonEvent */
+osEventFlagsId_t buttonEventHandle;
+const osEventFlagsAttr_t buttonEvent_attributes = {
+  .name = "buttonEvent"
+};
 /* USER CODE BEGIN PV */
 
 segmen_t sSegment;
 int8_t i_buffer[BUF_SIZE] = {0};
 int16_t temp = 1; // температура
-uint8_t isLoaded = 1; // флаг для ожидания загрузки значений из UART
+static uint8_t isLoaded = 1; // флаг для ожидания загрузки значений из UART
+
+typedef struct{
+	uint8_t a;
+	uint8_t b;
+	uint8_t c;
+}temp_t;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -72,9 +104,9 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_IWDG_Init(void);
-void indicationFunc(void const * argument);
-void modbusReceiveFunc(void const * argument);
-void swoTimerDebugCallback(void const * argument);
+void indicationFunc(void *argument);
+void modbusReceiveFunc(void *argument);
+void swoTimerDebugCallback(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -127,6 +159,9 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();
+
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
@@ -136,9 +171,8 @@ int main(void)
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* Create the timer(s) */
-  /* definition and creation of swoTimerDebug */
-  osTimerStaticDef(swoTimerDebug, swoTimerDebugCallback, &swoTimerDebugControlBlock);
-  swoTimerDebugHandle = osTimerCreate(osTimer(swoTimerDebug), osTimerPeriodic, NULL);
+  /* creation of swoTimerDebug */
+  swoTimerDebugHandle = osTimerNew(swoTimerDebugCallback, osTimerPeriodic, NULL, &swoTimerDebug_attributes);
 
   /* USER CODE BEGIN RTOS_TIMERS */
   	if(swoTimerDebugHandle != NULL)
@@ -150,26 +184,31 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* definition and creation of queueDisplayS */
-  osMessageQDef(queueDisplayS, 16, int16_t);
-  queueDisplaySHandle = osMessageCreate(osMessageQ(queueDisplayS), NULL);
+  /* creation of queueDisplayS */
+  queueDisplaySHandle = osMessageQueueNew (16, sizeof(int16_t), &queueDisplayS_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* definition and creation of indicationSegm */
-  osThreadDef(indicationSegm, indicationFunc, osPriorityNormal, 0, 128);
-  indicationSegmHandle = osThreadCreate(osThread(indicationSegm), NULL);
+  /* creation of indicationSegm */
+  indicationSegmHandle = osThreadNew(indicationFunc, NULL, &indicationSegm_attributes);
 
-  /* definition and creation of modbusReceive */
-  osThreadDef(modbusReceive, modbusReceiveFunc, osPriorityNormal, 0, 128);
-  modbusReceiveHandle = osThreadCreate(osThread(modbusReceive), NULL);
+  /* creation of modbusReceive */
+  modbusReceiveHandle = osThreadNew(modbusReceiveFunc, NULL, &modbusReceive_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
+
+  /* Create the event(s) */
+  /* creation of buttonEvent */
+  buttonEventHandle = osEventFlagsNew(&buttonEvent_attributes);
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
   osKernelStart();
@@ -245,7 +284,7 @@ static void MX_IWDG_Init(void)
 
   /* USER CODE END IWDG_Init 1 */
   hiwdg.Instance = IWDG;
-  hiwdg.Init.Prescaler = IWDG_PRESCALER_128;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
   hiwdg.Init.Reload = 4095;
   if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
   {
@@ -321,6 +360,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : BUT1_Pin BUT2_Pin BUT3_Pin BUT4_Pin */
+  GPIO_InitStruct.Pin = BUT1_Pin|BUT2_Pin|BUT3_Pin|BUT4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pins : LA_Pin LB_Pin LC_Pin L3_Pin
                            LD_Pin LE_Pin LF_Pin LG_Pin
                            LP_Pin L1_Pin L2_Pin */
@@ -343,14 +388,14 @@ void TaskSwichedIn(int tag)
   #ifdef TASK_DEBUG
     switch (tag)
     {
+	  case 0:
+		  GPIOA->BSRR = GPIO_PIN_0;
+		  break;
 	  case 1:
 		  GPIOA->BSRR = GPIO_PIN_1;
 		  break;
 	  case 2:
 		  GPIOA->BSRR = GPIO_PIN_2;
-		  break;
-	  case 3:
-		  GPIOA->BSRR = GPIO_PIN_3;
 		  break;
     }
     #endif
@@ -361,14 +406,14 @@ void TaskSwichedOut(int tag)
   #ifdef TASK_DEBUG
     switch (tag)
     {
+	  case 0:
+		  GPIOA->BSRR = (uint32_t)GPIO_PIN_0 << 16U;
+		  break;
 	  case 1:
 		  GPIOA->BSRR = (uint32_t)GPIO_PIN_1 << 16U;
 		  break;
 	  case 2:
 		  GPIOA->BSRR = (uint32_t)GPIO_PIN_2 << 16U;
-		  break;
-	  case 3:
-		  GPIOA->BSRR = (uint32_t)GPIO_PIN_3 << 16U;
 		  break;
     }
     #endif
@@ -377,101 +422,34 @@ void TaskSwichedOut(int tag)
 void vApplicationIdleHook(void)
 {
   #ifdef TASK_DEBUG
-    GPIOA->BSRR = GPIO_PIN_4;
+    GPIOA->BSRR = GPIO_PIN_3;
     __NOP();
-    GPIOA->BSRR = (uint32_t)GPIO_PIN_4 << 16U;
+    GPIOA->BSRR = (uint32_t)GPIO_PIN_3 << 16U;
   #endif
 }
 
-uint16_t crc_mb(uint8_t *buf, uint8_t len)
+void parseTemp(int16_t resTemp, temp_t* segment)
 {
-	uint16_t crc = 0xFFFF;
 
-	for (int pos = 0; pos < len; pos++)
+
+	if(resTemp < 0)
 	{
-		crc ^= (uint16_t)buf[pos]; // XOR byte into least sig. byte of crc
-		for (int i = 8; i != 0; i--)
-		{ // Loop over each bit
-			if ((crc & 0x0001) != 0)
-			{ // If the LSB is set
-				crc >>= 1; // Shift right and XOR 0xA001
-				crc ^= 0xA001;
-			}
-			else // Else LSB is not set
-				crc >>= 1; // Just shift right
-		}
+		segment->a = SHOW_MINUS;	// если отрицательно печатаем 10 (знак -)
+		resTemp = -resTemp; // меняем знак
 	}
-	// Note, this number has low and high bytes swapped, so use it accordingly (or swap bytes)
-	return crc;
-}
-
-
-
-
-
-
-
-uint8_t parse(int8_t *in_buffer, uint16_t buffer_size, int16_t *temp)
-{
-	//Опрелеляем функции, которые обслуживает наш серверы
-	typedef enum {MB_F_NONE = 0,
-				  MB_F_WRITE_SINGLE_REGISTER = 0x6,
-				  MB_F_WRITE_MULTIPLAY_REGISTER = 0x10}fcode_t;
-
-
-	static int8_t out_buffer[256]; 			// Массив для нашего ответа
-	int out_len = 0; 							// Длина ответа
-	union
-	{
-		uint16_t uint16;
-		uint8_t  bytes[2];
-	}crc; 										// Сюда удобно класть контрольную сумму
-
-	fcode_t f_code 		   = MB_F_NONE;			// Код запроса
-	//uint16_t registr       = 0;					// Адрес выхода
-
-
-	if(in_buffer[0] == MB_ADDR)					// Если нам пришёл запрос…
-	{
-		f_code = in_buffer[1];					// Запоминаем его код
-		switch(f_code)
-		{
-		case MB_F_WRITE_SINGLE_REGISTER:					// Запись в регистр
-			for(int i = 0; i < 6; i++)
-				out_buffer[i] = in_buffer[i];
-
-			//registr = (((uint16_t)in_buffer[2]) << 8) | ((uint16_t)in_buffer[3]); // Читаем адрес выхода
-			*temp = (((uint16_t)in_buffer[4]) << 8) | ((uint16_t)in_buffer[5]); // Записываем значение температуры
-
-			crc.uint16 = crc_mb(out_buffer, 6);	// Считаем КС ответа
-			out_buffer[6] = crc.bytes[0];		// Записываем её в ответ
-			out_buffer[7] = crc.bytes[1];
-			out_len = 8;						// количество байт фиксированное
-			HAL_UART_Transmit(&huart1, out_buffer, out_len, 200); // Передаём ответ
-			return 1;
-			break;
-		default:									// Другая функция
-			out_len = 5;
-			out_buffer [0] = in_buffer[0]; 			// Адрес устройства
-			out_buffer [1] = in_buffer[1] | 0x80; 	// Признак ошибки: номер функции с единицей в старшем разряде
-			out_buffer [2] = 1;						// Стандартная ошибка № 1: функция не реализована
-			crc.uint16 = crc_mb(out_buffer, 3);
-			out_buffer[3] = crc.bytes[0];
-			out_buffer[4] = crc.bytes[1];
-
- 			HAL_UART_Transmit(&huart1, out_buffer, out_len, 200);
- 			return 0;
-			break;
-		}
-	}
-	return 0;
+	else
+		segment->a = LOCK_PRINT_SEGMENT; // Не печатем первый сегмент ( a > 10 return)
+	segment->c = resTemp % 10; // Третьий сегмент
+    resTemp /= 10;
+	segment->b = resTemp % 10; // Второй сегмент
 }
 
 // Функция для получения данных по UART
 void modbusRvTmData(void)
 {
+	extern uint8_t isLoaded;
     // Чтение данных из UART
-    HAL_UART_Receive(&huart1, i_buffer, BUF_SIZE, 10);
+    HAL_UART_Receive(&huart1, i_buffer, BUF_SIZE, 50);
     if(parse(i_buffer, BUF_SIZE, &temp))
     {
     	xQueueSendFromISR(queueDisplaySHandle, &temp, NULL);
@@ -490,53 +468,42 @@ void modbusRvTmData(void)
   * @retval None
   */
 /* USER CODE END Header_indicationFunc */
-void indicationFunc(void const * argument)
+void indicationFunc(void *argument)
 {
   /* USER CODE BEGIN 5 */
   #ifdef TASK_DEBUG
-    vTaskSetApplicationTaskTag(NULL, (void*)1);
+	  vTaskSetApplicationTaskTag(NULL, (void*)0);
   #endif
 
 
   while(isLoaded)
 	  osDelay(1);
   uint8_t i = 0;
-  int16_t resTemp = 0; // приходячая из очереди температура
-  uint8_t a = LOCK_PRINT_SEGMENT, b = 0, c = 0; // 1 - для знака, 2 и 3 числа
+  int16_t resTemp = 0; // приходящая из очереди температура
+  temp_t segments = {.a = LOCK_PRINT_SEGMENT, .b = 0, .c = 0}; // 1 - для знака, 2 и 3 числа
   /* Infinite loop */
   for(;;)
   {
-          // Обработка полученных данных
-          // Например, вывод данных в консоль или выполнение других действий
 	  	if(xQueueReceive(queueDisplaySHandle, &resTemp, 1) == pdTRUE)
 	  	{
-	  		// не корректное значение температуры, уходим в for(;;);
-	  		configASSERT(!(resTemp > 99 || resTemp < -99));
-	  		if(resTemp < 0)
-	  		{
-	  			a = SHOW_MINUS;	// если отрицательно печатаем 10 (знак -)
-	  			resTemp = -resTemp; // меняем знак
-	  		}
-	  		else
-	  			a = LOCK_PRINT_SEGMENT; // Не печатем первый сегмент ( a > 10 return)
-	  	    c = resTemp % 10; // Третьий сегмент
-	  	    resTemp /= 10;
-	  	    b = resTemp % 10; // Второй сегмент
-	  	    resTemp /= 10;
+	  		// если получаем не корректные значения температуры уходим в for(;;);
+		  	if(resTemp > 99 || resTemp < -99)
+		  		Error_Handler();
+	  		parseTemp(resTemp, &segments);
 	  	}
 		switch(i)
 		{
 			case 0:
 				// Отображаем 1 сегмент
-				displaySegment(&sSegment, i, a, 0);
+				displaySegment(&sSegment, i, segments.a, 0);
 				break;
 			case 1:
 				// Отображаем 2 сегмент
-				displaySegment(&sSegment, i, b, 0);
+				displaySegment(&sSegment, i, segments.b, 0);
 				break;
 			case 2:
 				// Отображаем 3 сегмент
-				displaySegment(&sSegment, i, c, 0);
+				displaySegment(&sSegment, i, segments.c, 0);
 				break;
 		}
 		if(++i > 2)
@@ -553,15 +520,13 @@ void indicationFunc(void const * argument)
 * @retval None
 */
 /* USER CODE END Header_modbusReceiveFunc */
-void modbusReceiveFunc(void const * argument)
+void modbusReceiveFunc(void *argument)
 {
   /* USER CODE BEGIN modbusReceiveFunc */
   /* Infinite loop */
   #ifdef TASK_DEBUG
-    vTaskSetApplicationTaskTag(NULL, (void*)2);
+    vTaskSetApplicationTaskTag(NULL, (void*)1);
   #endif
-
-    // Запуск таймера
 
   for(;;)
   {
@@ -572,12 +537,12 @@ void modbusReceiveFunc(void const * argument)
 }
 
 /* swoTimerDebugCallback function */
-void swoTimerDebugCallback(void const * argument)
+void swoTimerDebugCallback(void *argument)
 {
   /* USER CODE BEGIN swoTimerDebugCallback */
-    GPIOA->BSRR = GPIO_PIN_3;
+    GPIOA->BSRR = GPIO_PIN_2;
     __NOP();
-    GPIOA->BSRR = (uint32_t)GPIO_PIN_3 << 16U;
+    GPIOA->BSRR = (uint32_t)GPIO_PIN_2 << 16U;
     HAL_IWDG_Refresh(&hiwdg);
     //printf("swo test\n");
   /* USER CODE END swoTimerDebugCallback */
@@ -592,8 +557,11 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+  uint8_t i = 0;
   while (1)
   {
+	  displaySegment(&sSegment, (uint8_t)2, i++ > 8 ? i = 0 : i, 0);
+	  for(uint32_t i = 0xFFF; i < 0xFFFFF; i++)__NOP();
   }
   /* USER CODE END Error_Handler_Debug */
 }
